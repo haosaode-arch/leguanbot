@@ -76,7 +76,7 @@ docker compose -f docker-compose.server.yml down
    ```
 3. **首次推送**：双击 **推送更新.bat**（首次会弹出浏览器让你登录 GitHub 授权）。
 4. 推送后稍等 2–5 分钟，GitHub 仓库 **Actions** 标签页会自动完成构建并发布镜像：
-   `ghcr.io/你的用户名/tg-funbot:latest`
+   `ghcr.io/haosaode-arch/leguanbot:latest`
 5. **服务器拉取**：把这行镜像地址填进 `docker-compose.server.yml` 的 `image:` 字段，然后按上面「部署步骤（Docker）」执行即可。
 
 > 免密：GitHub 内置的 GITHUB_TOKEN 会自动授权推送 GHCR，不需要配置任何 token。
@@ -100,6 +100,8 @@ docker compose -f docker-compose.server.yml down
   `docker run ghcr.io/你的用户名/tg-funbot:va9942c7`
 
 如果服务器网络拉 GHCR 慢/被墙：给 Docker daemon 配代理（`/etc/docker/daemon.json` 或 systemd 环境变量 `HTTP_PROXY/HTTPS_PROXY`），或改用国内镜像站加速。
+
+镜像：`ghcr.io/haosaode-arch/leguanbot:latest`（版本标签 `v<提交号>` 格式，可回滚）
 
 ## 数据与运维
 

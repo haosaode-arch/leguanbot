@@ -3,7 +3,7 @@
 
 services:
   tg-funbot:
-    image: ghcr.io/你的GitHub用户名/tg-funbot:latest
+    image: ghcr.io/haosaode-arch/leguanbot:latest
     container_name: tg-funbot
     restart: unless-stopped
     environment:
