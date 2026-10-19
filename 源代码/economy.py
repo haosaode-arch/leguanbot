@@ -3,6 +3,7 @@
 
 import datetime
 import random
+import re
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -13,6 +14,28 @@ import database as db
 BASE_REWARD = 50
 STREAK_BONUS = 10
 MAX_BONUS = 60
+
+
+def parse_reward(text: str):
+    """统一奖励解析：支持「N金币」「N金币+自定义」「自定义+N金币」「纯自定义」。
+
+    返回 (gold, custom)。custom 为空串表示没有自定义部分。
+    """
+    text = (text or "").strip()
+    if not text:
+        return None, ""
+    if text.isdigit():  # 纯数字 = 金币数（/红包 300 的旧写法）
+        return int(text), ""
+    m = re.match(r"(\d+)\s*金币", text)
+    if m:  # 金币开头：100金币 / 100金币+T恤
+        gold = int(m.group(1))
+        custom = text[m.end():].lstrip("＋+ ").strip()
+        return gold, custom
+    m = re.search(r"[＋+ ]\s*(\d+)\s*金币", text)
+    if m:  # 金币在后：T恤+100金币
+        custom = (text[:m.start()] + text[m.end():]).strip("＋+ -—· ").strip()
+        return int(m.group(1)), custom
+    return None, text  # 纯自定义文案
 
 
 def _today_str() -> str:

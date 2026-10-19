@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""红包：/红包 总金额 [份数]，群友点击按钮抢，随机分配。"""
+"""红包：/红包 奖励 [份数]，群友点击按钮抢，随机分配。
+
+支持统一奖励写法：
+  /红包 200 5              → 纯金币红包（随机拆分）
+  /红包 100金币+电影票 5   → 金币红包，每份附带「电影票」（线下兑现）
+  /红包 一箱可乐 3         → 纯自定义红包，每份都是「一箱可乐」
+"""
 
 import random
 import secrets
@@ -8,51 +14,84 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
+import economy
 
 MAX_PACKETS = 30
 
-# 抢红包的防重复：token -> {"total": n, "shares": [int], "grabs": {uid: (name, 领到数)}, "msg_id": int}
+# token -> {
+#   "shares": [int|None], "custom": str, "gold_total": int,
+#   "grabs": {uid: (name, gold_amount, custom)}, "sender": str,
+# }
 REDPACKETS = {}
 
 
+def _describe(amount, custom):
+    """把 (金币, 自定义) 组合成一句奖励文案。"""
+    parts = []
+    if amount:
+        parts.append(f"{amount} 金币")
+    if custom:
+        parts.append(custom)
+    return " + ".join(parts) if parts else "空气一份 😶"
+
+
 async def cmd_redpacket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/红包 总金额 [份数]  —— 例如 /红包 200 5"""
+    """/红包 奖励 [份数]  —— 例如 /红包 200 5、/红包 100金币+电影票 5、/红包 一箱可乐 3"""
     chat = update.effective_chat
     if chat.type not in ("group", "supergroup"):
         await update.message.reply_text("红包只能在群里发哦～")
         return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text('用法：/红包 总金额 [份数]\n例如：/红包 200 5（默认 5 份）')
-        return
-
-    total = int(context.args[0])
-    n = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 5
-    n = max(1, min(n, MAX_PACKETS))
-    total = max(n, min(total, 100000))  # 每份至少 1 金币
-
-    user = update.effective_user
-    row = db.ensure_user(user.id)
-    if row["points"] < total:
+    if not context.args:
         await update.message.reply_text(
-            f"💰 余额不足：要发 {total} 金币的红包，你只有 {row['points']}。先去 /签到 赚钱吧～"
+            "用法：/红包 奖励 [份数]（默认 5 份，最多 30 份）\n"
+            "　/红包 200 5              ← 200 金币分 5 份随机抢\n"
+            "　/红包 100金币+电影票 5   ← 每份 = 随机金币 + 电影票\n"
+            "　/红包 一箱可乐 3         ← 纯自定义，3 份都是可乐"
         )
         return
-    db.add_points(user.id, -total)
 
-    # 贪心随机拆分：份份 >= 1 且和为 total
-    shares = _split(total, n)
+    total_raw = context.args[0]
+    n = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 5
+    n = max(1, min(n, MAX_PACKETS))
+
+    gold, custom = economy.parse_reward(total_raw)
+    # 兼容旧写法「/红包 200」不带"金币"两字
+    if gold is None and not custom and total_raw.isdigit():
+        gold = int(total_raw)
+    if gold is None and not custom:
+        await update.message.reply_text(
+            "奖励写法没看懂…像这样：/红包 200 5、/红包 100金币+电影票 5、/红包 一箱可乐 3"
+        )
+        return
+
+    if gold is not None:
+        gold_total = max(n, min(gold, 100000))  # 每份至少 1 金币
+        shares = _split(gold_total, n)
+        row = db.ensure_user(update.effective_user.id)
+        if row["points"] < gold_total:
+            await update.message.reply_text(
+                f"💰 余额不足：要发 {gold_total} 金币的红包，你只有 {row['points']}。先去 /签到 赚钱吧～"
+            )
+            return
+        db.add_points(update.effective_user.id, -gold_total)
+        total_line = f"💰 金币 {gold_total} ／ {n} 份" + (f" ／ 每份附赠 {custom}" if custom else "")
+    else:
+        gold_total = 0
+        shares = [None] * n  # 纯自定义红包：每份都是同一文案
+        total_line = f"🎁 每份：{custom} ／ {n} 份"
+
     token = secrets.token_hex(4)
     REDPACKETS[token] = {
-        "total": total,
         "shares": shares,
+        "custom": custom or "",
+        "gold_total": gold_total,
         "grabs": {},
-        "msg_id": None,
-        "sender": user.first_name or user.username or str(user.id),
+        "sender": update.effective_user.first_name or update.effective_user.username or str(update.effective_user.id),
     }
 
     text = (
-        f"🧧 {user.first_name} 发了一个红包！\n"
-        f"💵 总额 {total} 金币 ／ {n} 份\n"
+        f"🧧 {update.effective_user.first_name} 发了一个红包！\n"
+        f"{total_line}\n"
         f"剩余 {n} 份待抢"
     )
     keyboard = InlineKeyboardMarkup(
@@ -76,14 +115,6 @@ def _split(total: int, n: int):
     return shares
 
 
-def _summary_text(token: str):
-    rp = REDPACKETS[token]
-    lines = [f"🧧 拆分中… 剩余 {len(rp['shares'])} 份"]
-    for uid, (name, amount) in list(rp["grabs"].items())[-5:]:
-        lines.append(f"　{amount} 金币 ｜ {name}")
-    return "\n".join(lines)
-
-
 async def cb_grab(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     token = query.data.split(":", 1)[1]
@@ -94,36 +125,46 @@ async def cb_grab(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
     if user.id in rp["grabs"]:
-        got = rp["grabs"][user.id][1]
-        await query.answer(f"你已抢到 {got} 金币，别贪心～")
+        await query.answer("你已经抢过了，每人限一次～")
         return
     if not rp["shares"]:
         await query.answer("手慢了，红包抢完啦😭", show_alert=True)
         return
 
     amount = rp["shares"].pop()
-    rp["grabs"][user.id] = (user.first_name or user.username or str(user.id), amount)
-    db.add_points(user.id, amount)
-    await query.answer(f"🎉 抢到 {amount} 金币！")
+    custom = rp["custom"]
+    name = user.first_name or user.username or str(user.id)
+    rp["grabs"][user.id] = (name, amount or 0, custom)
+
+    if amount:
+        db.add_points(user.id, amount)
+    await query.answer(f"🎉 抢到 {_describe(amount, custom)}！")
 
     if rp["shares"]:
         try:
             await query.edit_message_text(
-                f"🧧 {rp['sender']} 的红包已被抢……\n剩余 {len(rp['shares'])} 份\n{len(rp['grabs'])} 人已入账",
+                f"🧧 {rp['sender']} 的红包已被抢……\n"
+                f"剩余 {len(rp['shares'])} 份 ／ {len(rp['grabs'])} 人已入账",
                 reply_markup=query.message.reply_markup,
             )
         except Exception:
             pass
     else:
-        # 抢完了：展示最终战况
-        best = sorted(rp["grabs"].items(), key=lambda kv: kv[1][1], reverse=True)[0]
+        # 抢完：最终战况（金币排手气，纯自定义按抢的顺序）
+        if rp["gold_total"]:
+            ordered = sorted(rp["grabs"].items(), key=lambda kv: kv[1][1], reverse=True)
+            others_note = ""
+        else:
+            ordered = list(rp["grabs"].items())
+            others_note = "\n（纯自定义奖励，请各自找发起者领取）"
+        best_id = ordered[0][0] if rp["gold_total"] else None
         lines = [f"🧧 {rp['sender']} 的红包已被抢完！", "", "📊 战况："]
-        for uid, (name, amount) in sorted(rp["grabs"].items(), key=lambda kv: kv[1][1], reverse=True):
-            crown = "👑" if uid == best[0] else "　"
-            lines.append(f"{crown} {amount:>4} 金币 ｜ {name}")
+        for uid, (name, amount, custom) in ordered:
+            crown = "👑" if rp["gold_total"] and uid == best_id else "　"
+            lines.append(f"{crown} {_describe(amount, custom)} ｜ {name}")
+        lines.append(others_note)
         try:
             await query.edit_message_text("\n".join(lines))
         except Exception:
-            REDPACKETS.pop(token, None)
-            return
+            pass
         REDPACKETS.pop(token, None)

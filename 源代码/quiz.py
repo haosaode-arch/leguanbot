@@ -17,6 +17,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import database as db
+import economy
 
 MAX_WRONG = 20
 PENDING = {}   # admin_id -> 暂存题 {question, answer, reward_text, gold}
@@ -29,14 +30,19 @@ def _norm(text: str) -> str:
 
 
 def parse_reward(text: str, fallback: str):
-    """「200金币」→ (200, '')；其他文案 → (None, 文案)。空则用 fallback。"""
-    text = (text or "").strip()
-    if not text:
-        text = fallback
-    m = re.match(r"\s*(\d+)\s*金币\s", text) or re.fullmatch(r"\s*(\d+)\s*金币?", text)
-    if m:
-        return int(m.group(1)), ""
-    return None, text
+    """带默认值的奖励解析（走 economy.parse_reward 统一口径）。"""
+    text = (text or "").strip() or fallback
+    gold, custom = economy.parse_reward(text)
+    return gold, custom
+
+
+def reward_display(gold, custom):
+    parts = []
+    if gold:
+        parts.append(f"{gold} 金币")
+    if custom:
+        parts.append(custom)
+    return " + ".join(parts) if parts else "无"
 
 
 async def _is_admin(user, chat_id, context) -> bool:
@@ -82,13 +88,14 @@ async def cmd_set_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "🎯 当前默认奖励：" + cur + "\n\n"
             "设置方法（私聊）：\n"
-            "　/答题奖励 200金币      ← 金币奖，答对自动入账\n"
-            "　/答题奖励 一杯奶茶 🧋  ← 自定义奖励，答对后由管理员线下兑现"
+            "　/答题奖励 200金币          ← 金币奖，答对自动入账\n"
+            "　/答题奖励 100金币+奶茶 🧋  ← 金币 + 自定义兑现\n"
+            "　/答题奖励 一杯奶茶 🧋      ← 纯自定义奖励，答对后由管理员线下兑现"
         )
         return
 
     gold, custom = parse_reward(text, "100金币")
-    stored = f"{gold}金币" if gold is not None else custom
+    stored = reward_display(gold, custom)
     db.set_setting("quiz_reward", stored)
     await update.message.reply_text(f"✅ 默认奖励已更新为：{stored}")
 
@@ -126,9 +133,12 @@ async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question, answer = parts[0].strip(), parts[1].strip()
     reward_raw = parts[2].strip() if len(parts) >= 3 else ""
     gold, custom = parse_reward(reward_raw, db.get_setting("quiz_reward") or "100金币")
-    reward_text = f"{gold} 金币" if gold is not None else custom
+    reward_text = reward_display(gold, custom)
 
-    PENDING[uid] = {"question": question, "answer": answer, "reward_text": reward_text, "gold": gold}
+    PENDING[uid] = {
+        "question": question, "answer": answer,
+        "gold": gold, "custom": custom, "reward_text": reward_text,
+    }
     await update.message.reply_text(
         "✅ 题目已暂存（未公布）：\n"
         f"❓ {question}\n"
@@ -174,6 +184,7 @@ async def cmd_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "answer": state["answer"],
         "reward_text": state["reward_text"],
         "gold": state["gold"],
+        "custom": state.get("custom", ""),
         "creator": user.id,
         "wrong": 0,
     }
@@ -241,10 +252,11 @@ async def cb_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if state:  # re-check：公布逻辑可能刚好把该题关掉
             if state["gold"] is not None:
                 db.add_points(uid, state["gold"])
-                got_text = f"{state['gold']} 金币已入账 💰"
-            else:
-                got_text = f"自定义奖励：{state['reward_text']}\n记得找管理员线下领取哦 🧋"
-            await update.message.reply_text(f"🎉 正确！答案就是「{state['answer']}」\n奖励：{got_text}")
+            got_text = reward_display(state["gold"], state["custom"])
+            suffix = "\n记得找管理员线下领取哦 🧋" if state["custom"] else ""
+            await update.message.reply_text(
+                f"🎉 正确！答案就是「{state['answer']}」\n奖励：{got_text}{suffix}"
+            )
             _finish(hit, context.bot, winner=update.effective_user.mention_html())
     elif attempted:
         await update.message.reply_text("❌ 不对，再想想～")

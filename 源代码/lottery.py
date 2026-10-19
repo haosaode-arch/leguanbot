@@ -9,6 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import database as db
+import economy
 
 MAX_MINUTES = 30
 
@@ -23,11 +24,9 @@ def _fmt_name(user_id, name):
 
 
 def _parse_prize(prize: str):
-    """奖品形如 '100金币' 时返回 (100, '100金币')，否则返回 (None, 原文)。"""
-    m = re.fullmatch(r"\s*(\d+)\s*金币?", prize or "")
-    if m:
-        return int(m.group(1)), prize
-    return None, prize
+    """统一解析：返回 (gold, custom, display)。display 始终是用户写的原文。"""
+    gold, custom = economy.parse_reward(prize or "")
+    return gold, custom, (prize or "100金币")
 
 
 # ============ 抽奖 ============
@@ -54,7 +53,7 @@ async def cmd_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     minutes = max(0.2, min(minutes, MAX_MINUTES))
     prize = " ".join(args) if args else "100金币"
 
-    gold, display_prize = _parse_prize(prize)
+    gold, custom, display_prize = _parse_prize(prize)
     if gold is not None:
         row = db.ensure_user(user.id)
         if row["points"] < gold:
@@ -62,7 +61,7 @@ async def cmd_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"你的金币不够发「{gold} 金币」的奖，当前只有 {row['points']}。"
             )
             return
-        # 先冻结中奖者的扣款来源（开奖时若发起者余额不足，金币奖照发但发起者扣到 0）
+        # 先冻结发起者金币，开奖时到场发放；无人参与则退还
         db.add_points(user.id, -gold)
 
     ends = time.time() + minutes * 60
@@ -73,6 +72,7 @@ async def cmd_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "players": {},
         "starter": user.id,
         "gold": gold,
+        "custom": custom,
     }
 
     text = (
@@ -135,12 +135,19 @@ async def _end_lottery(context: ContextTypes.DEFAULT_TYPE):
     winner_id = random.choice(list(players.keys()))
     winner_name = _fmt_name(winner_id, players[winner_id])
 
-    gold, _ = _parse_prize(state["prize"])
+    gold = state.get("gold")
+    custom = state.get("custom", "")
     if gold is not None:
         db.add_points(winner_id, gold)
-        prize_note = f"{gold} 金币已存入 TA 的钱包 💰"
+    notes = []
+    if gold is not None:
+        notes.append(f"💰 {gold} 金币已存入 TA 的钱包")
+    if custom:
+        notes.append(f"🧾 额外奖励：{custom}（请找发起者兑换）")
+    if not notes:
+        prize_note = f"🎁 奖品：{state['prize']}，速速找发起者兑奖！"
     else:
-        prize_note = f"奖品：{state['prize']}，速速找发起者兑奖！"
+        prize_note = "\n".join(notes)
 
     await context.bot.send_message(
         chat_id,
@@ -173,7 +180,7 @@ async def cmd_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = max(2, min(target, 20))
     prize = " ".join(args) if args else "100金币"
 
-    gold, display_prize = _parse_prize(prize)
+    gold, custom, display_prize = _parse_prize(prize)
     if gold is not None:
         row = db.ensure_user(user.id)
         if row["points"] < gold:
@@ -186,6 +193,7 @@ async def cmd_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ROULETTES[chat.id] = {
         "prize": display_prize,
         "gold": gold,
+        "custom": custom,
         "target": target,
         "msg_id": None,
         "players": {},
@@ -265,14 +273,19 @@ async def _roulette_tick(context: ContextTypes.DEFAULT_TYPE):
     if len(alive) <= 1:
         ROULETTES.pop(chat_id, None)
         wid, wname = alive[0]
-        if state["gold"] is not None:
-            db.add_points(wid, state["gold"])
-            note = f"💰 {state['gold']} 金币已到账！"
-        else:
-            note = f"🎁 奖品：{state['prize']}"
+        gold, custom = state.get("gold"), state.get("custom", "")
+        if gold is not None:
+            db.add_points(wid, gold)
+        notes = []
+        if gold is not None:
+            notes.append(f"💰 {gold} 金币已到账！")
+        if custom:
+            notes.append(f"🧾 额外奖励：{custom}（请找发起者兑换）")
+        if not notes:
+            notes.append(f"🎁 奖品：{state['prize']}")
         await context.bot.send_message(
             chat_id,
-            f"🔫 枪声停止……\n🏆 生存者：<b>{_fmt_name(wid, wname)}</b>\n{note}",
+            f"🔫 枪声停止……\n🏆 生存者：<b>{_fmt_name(wid, wname)}</b>\n" + "\n".join(notes),
             parse_mode="HTML",
         )
         return

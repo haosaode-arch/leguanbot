@@ -153,9 +153,10 @@ def update_user(user_id: int, **fields):
 
 
 def add_points(user_id: int, delta: int):
-    """加减积分，负数会一直扣到 0（不出现负余额）。"""
+    """加减积分（自动补建用户行，防止中奖者无记录时金币丢失）；负数扣到 0 为止。"""
     with _lock:
         conn = _connect()
+        conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         conn.execute(
             "UPDATE users SET points = MAX(0, points + ?) WHERE user_id = ?",
             (delta, user_id),
