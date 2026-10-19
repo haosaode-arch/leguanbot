@@ -3,6 +3,7 @@
 
 import hashlib
 import os
+import re
 import sqlite3
 import threading
 
@@ -83,6 +84,23 @@ def set_game_enabled(game: str, enabled: bool):
 
 def game_states():
     return {k: is_game_enabled(k) for k in GAME_NAMES}
+
+
+# ---------------- 机器人管理员（Web 端配置 TG ID） ----------------
+
+def get_admin_ids():
+    """Web 面板设置的 Telegram 用户 ID 列表。"""
+    raw = get_setting("admin_ids") or ""
+    return [int(x) for x in re.findall(r"\d+", raw)]
+
+
+def is_bot_admin(user_id) -> bool:
+    return user_id in get_admin_ids()
+
+
+def set_admin_ids_text(text: str):
+    """任意分隔格式都行：'12345, 67890' / 换行 / 空格。"""
+    set_setting("admin_ids", ",".join(re.findall(r"\d+", text or "")))
 
 
 def init_db():

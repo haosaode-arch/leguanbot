@@ -46,6 +46,9 @@ def reward_display(gold, custom):
 
 
 async def _is_admin(user, chat_id, context) -> bool:
+    """Web 面板配置的机器人管理员，或本群的管理员均放行。"""
+    if db.is_bot_admin(user.id):
+        return True
     try:
         member = await context.bot.get_chat_member(chat_id, user.id)
         return member.status in ("administrator", "creator")

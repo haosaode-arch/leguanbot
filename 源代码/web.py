@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.parse
 
+import economy
 import httpx
 from flask import Flask, jsonify, redirect, request, session
 
@@ -225,6 +226,21 @@ _PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="panel">
+    <h2>👑 管理员与答题默认奖励</h2>
+    <div class="row">
+      <label class="field" style="flex:1 1 320px;"><span>机器人管理员 TG ID（逗号/空格/换行分隔，拥有发题、结束接龙等权限）</span>
+        <input id="a_ids" placeholder="123456789, 987654321" style="min-width:300px;">
+      </label>
+      <label class="field" style="flex:1 1 260px;"><span>答题默认奖励（N金币 / N金币+奖品 / 纯奖品）</span>
+        <input id="a_reward" placeholder="100金币、100金币+电影票、一杯奶茶" style="min-width:260px;">
+      </label>
+      <button class="btn primary" onclick="saveAdmin()">💾 保存</button>
+    </div>
+    <div class="muted">当前：<span id="a_current">…</span></div>
+    <div class="msg" id="a_msg"></div>
+  </div>
+
+  <div class="panel">
     <h2>🎛 游戏开关（点击即时生效，无需重启）</h2>
     <div class="chips" id="games"><span class="muted">加载中……</span></div>
     <div class="muted" style="margin-top:10px;">关闭后群里对应命令立即停用；进行中的抽奖/轮盘/红包不受影响。答题游戏：</div>
@@ -322,11 +338,33 @@ async function restartBot(){
   location.reload();
 }
 
-load(); setInterval(load, 10000); loadSettings(); loadGames();
+load(); setInterval(load, 10000); loadSettings(); loadGames(); loadAdmin();
 
-function gameMsg(text, ok){
-  // 复用代理提示区域显示反馈可能离开关太远，单独用 console + 按钮 self-state 提示
-  console.log(text);
+// ---------------- 管理员与答题默认奖励 ----------------
+
+function adminMsg(text, ok){
+  const el=document.getElementById("a_msg");
+  el.textContent=text; el.className="msg "+(ok?"ok":"no");
+}
+
+async function loadAdmin(){
+  const s=await (await fetch("/api/admin_settings")).json();
+  document.getElementById("a_ids").value=s.admin_ids_text||"";
+  document.getElementById("a_reward").value=s.reward||"100金币";
+  document.getElementById("a_current").textContent =
+    "管理员 " + (s.admin_ids.length? s.admin_ids.length + " 人：" + s.admin_ids.join(", ") : "未设置") +
+    " ｜ 默认奖励 " + s.reward;
+}
+
+async function saveAdmin(){
+  const ids=document.getElementById("a_ids").value;
+  const reward=document.getElementById("a_reward").value;
+  const r=await fetch("/api/admin_settings",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({admin_ids_text:ids, reward:reward})});
+  const s=await r.json().catch(()=>({}));
+  adminMsg(r.ok ? "✅ 已保存"+(s.note? "，"+s.note : "") : ("❌ "+(s.error||"保存失败")), r.ok);
+  if(r.ok) loadAdmin();
 }
 
 async function loadGames(){
@@ -507,6 +545,39 @@ def api_games_toggle():
         return jsonify(ok=False, error="未知游戏"), 400
     db.set_game_enabled(key, bool(d.get("enabled")))
     return jsonify(ok=True, key=key, enabled=db.is_game_enabled(key))
+
+
+# ---------------- 机器人管理员 / 答题默认奖励 ----------------
+
+@app.get("/api/admin_settings")
+def api_admin_get():
+    ids = db.get_admin_ids()
+    return jsonify(
+        admin_ids_text=",".join(str(i) for i in ids),
+        admin_ids=ids,
+        reward=db.get_setting("quiz_reward") or "100金币",
+    )
+
+
+@app.post("/api/admin_settings")
+def api_admin_set():
+    d = request.get_json(force=True, silent=True) or {}
+    note_parts = []
+    if d.get("admin_ids_text") is not None:
+        db.set_admin_ids_text(str(d["admin_ids_text"]))
+        note_parts.append(f"管理员 {len(db.get_admin_ids())} 人")
+    if d.get("reward"):
+        reward = str(d["reward"]).strip()
+        gold, custom = economy.parse_reward(reward)
+        if gold is None and not custom:
+            db.set_setting("quiz_reward", "100金币")
+            return jsonify(ok=False, error="奖励格式没看懂"), 400
+        if gold is not None and gold > 100000:
+            return jsonify(ok=False, error="单次奖励人数上限 10 万金币"), 400
+        stored = (f"{gold} 金币" if gold else "") + (" + " if gold and custom else "") + custom
+        db.set_setting("quiz_reward", stored.strip(" +"))
+        note_parts.append(f"默认奖励 {stored}")
+    return jsonify(ok=True, note="，".join(note_parts) or "无改动")
 
 
 def start(port: int = None):
