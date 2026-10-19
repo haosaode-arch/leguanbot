@@ -2,8 +2,8 @@
 """群抽奖 / 俄罗斯轮盘。内存态，按聊天区分。"""
 
 import random
-import re
 import time
+import html
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -133,7 +133,7 @@ async def _end_lottery(context: ContextTypes.DEFAULT_TYPE):
         return
 
     winner_id = random.choice(list(players.keys()))
-    winner_name = _fmt_name(winner_id, players[winner_id])
+    winner_name = html.escape(_fmt_name(winner_id, players[winner_id]))
 
     gold = state.get("gold")
     custom = state.get("custom", "")
@@ -220,6 +220,8 @@ async def _roulette_cancel(context: ContextTypes.DEFAULT_TYPE):
     state = ROULETTES.get(chat_id)
     if not state:
         return
+    if len(state["players"]) >= state["target"]:
+        return  # 已凑满开赛，不再取消
     ROULETTES.pop(chat_id, None)
     if state.get("gold") is not None:
         db.add_points(state.get("starter", 0), state["gold"])
@@ -285,7 +287,7 @@ async def _roulette_tick(context: ContextTypes.DEFAULT_TYPE):
             notes.append(f"🎁 奖品：{state['prize']}")
         await context.bot.send_message(
             chat_id,
-            f"🔫 枪声停止……\n🏆 生存者：<b>{_fmt_name(wid, wname)}</b>\n" + "\n".join(notes),
+            f"🔫 枪声停止……\n🏆 生存者：<b>{html.escape(_fmt_name(wid, wname))}</b>\n" + "\n".join(notes),
             parse_mode="HTML",
         )
         return

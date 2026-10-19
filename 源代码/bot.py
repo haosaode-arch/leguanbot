@@ -25,10 +25,13 @@ from telegram.ext import (
 import database as db
 import economy
 import fun
+import guessnum
 import jielong
 import lottery
+import math24
 import quiz
 import redpacket
+import duel
 import web
 
 logging.basicConfig(
@@ -84,6 +87,10 @@ def build_help_text() -> str:
         f"　/出题 题目｜标准答案｜奖励 — （私聊）管理员出题{mark('quiz')}\n"
         "　/发题 —— （群里）发布暂存的题目\n"
         "　/答案请私聊发送给机器人 —— 第一答对拿奖\n\n"
+        "🧮 更多游戏\n"
+        f"　/24点 [算式] —— 四个数凑出 24，答对 +40 金币（每人每天 5 次）{mark('math24')}\n"
+        f"　/决斗 [押注] —— 回复某人约战掷骰，赢家通吃{mark('duel')}\n"
+        f"　/猜数字 [数字] —— 猜 1~999，范围自动收窄（每人每天 3 次）{mark('guessnum')}\n\n"
         "中文用法：/签到 /骰子 3 /抽奖 一等奖 5 · 英文用法：/signin /lottery"
     )
 
@@ -106,6 +113,10 @@ CHINESE_COMMANDS = {
     "发题": gated("quiz", quiz.cmd_publish),
     "答题奖励": gated("quiz", quiz.cmd_set_reward),
     "撤销出题": gated("quiz", quiz.cmd_cancel),
+    "24点": gated("math24", math24.cmd),
+    "决斗": gated("duel", duel.cmd_duel),
+    "猜数字": gated("guessnum", guessnum.cmd),
+    "猜": gated("guessnum", guessnum.cmd),
     "帮助": None,  # 在下方 handler 内指向 cmd_help
 }
 
@@ -200,9 +211,7 @@ def main():
     else:
         app = Application.builder().token(token).build()
 
-    # 0 组：旁路记录活跃用户（不拦截消息）
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track_activity), group=-1)
-    # 所有消息（含命令）也用于记录，保证发命令的人也可能被点到
+    # 0 组：旁路记录活跃用户（不拦截消息）；命令消息也记录，保证发命令的人也可能被点到
     app.add_handler(MessageHandler(filters.TEXT, track_activity), group=-1)
 
     # 英文命令
@@ -225,6 +234,9 @@ def main():
     app.add_handler(CommandHandler(["publish"], gated("quiz", quiz.cmd_publish)))
     app.add_handler(CommandHandler(["quizreward"], gated("quiz", quiz.cmd_set_reward)))
     app.add_handler(CommandHandler(["quizcancel"], gated("quiz", quiz.cmd_cancel)))
+    app.add_handler(CommandHandler(["math24"], gated("math24", math24.cmd)))
+    app.add_handler(CommandHandler(["duel"], gated("duel", duel.cmd_duel)))
+    app.add_handler(CommandHandler(["guess"], gated("guessnum", guessnum.cmd)))
 
     # 中文命令
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^/"), chinese_command))
@@ -233,6 +245,7 @@ def main():
     app.add_handler(CallbackQueryHandler(lottery.cb_lot_join, pattern="^lotjoin$"))
     app.add_handler(CallbackQueryHandler(lottery.cb_rou_join, pattern="^roujoin$"))
     app.add_handler(CallbackQueryHandler(redpacket.cb_grab, pattern="^grab:"))
+    app.add_handler(CallbackQueryHandler(duel.cb_accept, pattern="^duelok:"))
 
     # 私聊纯文本 → 答题判题（需要命令之外独立处理）
     app.add_handler(

@@ -69,6 +69,9 @@ GAME_NAMES = {
     "redpacket": "红包",
     "jielong":   "接龙",
     "quiz":      "答题",
+    "math24":    "24点",
+    "duel":      "决斗",
+    "guessnum":  "猜数字",
 }
 
 
@@ -103,6 +106,31 @@ def set_admin_ids_text(text: str):
     set_setting("admin_ids", ",".join(re.findall(r"\d+", text or "")))
 
 
+# ---------------- 每日获奖次数限制（防无限刷币） ----------------
+
+def daily_wins_count(user_id: int, game: str, day: str) -> int:
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT count FROM daily_wins WHERE user_id=? AND game=? AND day=?",
+            (user_id, game, day),
+        ).fetchone()
+        conn.close()
+        return row["count"] if row else 0
+
+
+def add_daily_win(user_id: int, game: str, day: str):
+    with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO daily_wins (user_id, game, day, count) VALUES (?, ?, ?, 1) "
+            "ON CONFLICT(user_id, game, day) DO UPDATE SET count = count + 1",
+            (user_id, game, day),
+        )
+        conn.commit()
+        conn.close()
+
+
 def init_db():
     with _lock:
         conn = _connect()
@@ -123,6 +151,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_wins (
+                user_id INTEGER NOT NULL,
+                game    TEXT    NOT NULL,
+                day     TEXT    NOT NULL,
+                count   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, game, day)
             );
             """
         )

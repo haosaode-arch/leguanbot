@@ -73,6 +73,7 @@ async def cmd_signin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name=user.first_name,
         last_signin=today,
         streak=streak,
+        signin_count=row["signin_count"] + 1,
     )
     db.add_points(user.id, reward)
     new_row = db.ensure_user(user.id)

@@ -23,6 +23,7 @@ MAX_DICE = 10
 
 ACTIVE_TTL = 10 * 60  # 秒
 _recent_active = {}  # chat_id -> {user_id: (User对象, 时间戳)}
+_last_picked = {}    # chat_id -> [最近被点过的 uid，避免连续点到同一人]
 
 
 def record_activity(update: Update):
@@ -117,7 +118,17 @@ async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    victim, _ = random.choice(list(bucket.values()))
+    # 尽量避开最近 3 次已被点过的人（样本太小时不排除）
+    candidates = [u for u in bucket.values() if u[0].id not in _last_picked.get(chat.id, [])]
+    if not candidates:
+        candidates = list(bucket.values())
+        _last_picked[chat.id] = []
+
+    victim, _ = random.choice(candidates)
+    picked = _last_picked.setdefault(chat.id, [])
+    picked.append(victim.id)
+    if len(picked) > 3:
+        picked.pop(0)
     mention = victim.mention_html()
     question = " ".join(context.args) if context.args else ""
     if question:
