@@ -42,6 +42,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 BOT_NAME = "🎰 娱乐机器人"
 
+def bot_display_name() -> str:
+    """机器人对外名字：Web 后台「机器人信息」可改，留空用内置默认。"""
+    return (db.get_setting("bot_name") or "").strip() or BOT_NAME
+
 # ---------------- 游戏独立开关 ----------------
 
 GAME_NAMES = db.GAME_NAMES  # key -> 中文名
@@ -82,7 +86,7 @@ async def cmd_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_help_text() -> str:
     mark = lambda g: "（已关闭⛔）" if not db.is_game_enabled(g) else ""
     return (
-        f"👋 我是 {BOT_NAME}！功能菜单：\n\n"
+        f"👋 我是 {bot_display_name()}！功能菜单：\n\n"
         "💰 经济\n"
         f"　/签到 —— 每日签到领金币（连续签到有加成）{mark('signin')}\n"
         "　/余额 —— 查看我的钱包和战绩\n"
@@ -193,6 +197,27 @@ def get_proxy_url():
     return os.environ.get("PROXY_URL") or None
 
 
+async def apply_bot_info(bot):
+    """把 Web 后台填写的机器人公开资料应用到 Telegram（只提交已填写的项）。"""
+    fields = [
+        ("set_my_name", db.get_setting("bot_name")),
+        ("set_my_short_description", db.get_setting("bot_short_desc")),
+        ("set_my_description", db.get_setting("bot_desc")),
+    ]
+    for method, value in fields:
+        value = (value or "").strip()
+        if not value:
+            continue
+        try:
+            await getattr(bot, method)(value)
+        except Exception as exc:
+            print(f"⚠️ 应用机器人资料失败({method}): {exc}")
+
+
+async def _post_init_botinfo(application):
+    await apply_bot_info(application.bot)
+
+
 def main():
     token = os.environ.get("BOT_TOKEN")
     if not token:
@@ -220,14 +245,16 @@ def main():
     if proxy_url:
         safe = proxy_url.replace("//" + proxy_url.split("//", 1)[1].split("@", 1)[0] + "@", "//***:***@") if "@" in proxy_url else proxy_url
         print(f"🌐 使用代理连接 Telegram: {safe}")
-        builder = Application.builder().token(token)
+
+    builder = Application.builder().token(token)
+    if proxy_url:
         try:
             builder = builder.proxy_url(proxy_url).get_updates_proxy_url(proxy_url)
         except AttributeError:  # 兼容老版本 PTB
             builder = builder.proxy_url(proxy_url)
-        app = builder.build()
-    else:
-        app = Application.builder().token(token).build()
+    # 启动时把后台填写的机器人资料（名字/简介）推送到 Telegram
+    builder = builder.post_init(_post_init_botinfo)
+    app = builder.build()
 
     # 0 组：旁路记录活跃用户（不拦截消息）；命令消息也记录，保证发命令的人也可能被点到
     app.add_handler(MessageHandler(filters.TEXT, track_activity), group=-1)
@@ -273,7 +300,7 @@ def main():
 
     app.add_error_handler(on_error)
 
-    print(f"🤖 {BOT_NAME} 启动成功，监听更新中…… Ctrl+C 退出。")
+    print(f"🤖 {bot_display_name()} 启动成功，监听更新中…… Ctrl+C 退出。")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

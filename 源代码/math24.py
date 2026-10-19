@@ -11,9 +11,9 @@
 """
 
 import ast
-import datetime
 import random
 import re
+import time
 from fractions import Fraction
 
 from telegram import Update
@@ -25,6 +25,7 @@ REWARD = 40
 DAILY_CAP = 5
 
 ROUNDS = {}  # chat_id -> {"nums": [4 ints], "starter": uid}
+_SWAP_CD = {}  # chat_id -> 上次换题时间（防止刷题捣乱）
 
 
 def _solvable(nums):
@@ -110,6 +111,11 @@ async def cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---- 跳过 / 结束 ----
     if arg in ("换", "跳过", "新题"):
+        last = _SWAP_CD.get(chat.id, 0.0)
+        if time.monotonic() - last < 30:
+            await update.message.reply_text("⏳ 换题太频繁啦，30 秒内只能换一次～")
+            return
+        _SWAP_CD[chat.id] = time.monotonic()
         ROUNDS[chat.id] = {"nums": _new_nums(), "starter": user.id}
         nums = " · ".join(str(n) for n in ROUNDS[chat.id]["nums"])
         await update.message.reply_text(f"🔄 换题！本轮 24 点：{nums}")
@@ -126,7 +132,7 @@ async def cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if arg and state:
         if check(arg, state["nums"]):
             name = html_escape_name(update.effective_user)
-            day = datetime.date.today().isoformat()
+            day = db.today_cn()
             won = db.daily_wins_count(user.id, "math24", day)
             if won < DAILY_CAP:
                 db.add_points(user.id, REWARD)

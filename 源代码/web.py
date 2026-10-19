@@ -8,6 +8,7 @@
 import functools
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -21,6 +22,11 @@ import database as db
 
 START_TS = time.time()
 PORT = int(os.environ.get("WEB_PORT", "8080"))
+
+# 登录防爆破：ip -> [连续失败次数, 锁止时间戳]
+_login_fails = {}
+FAIL_LIMIT = 5
+LOCK_SECONDS = 300
 
 PROXY_TYPES = ["socks5", "socks5h", "socks4", "http"]
 
@@ -80,8 +86,10 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   h1 { font-size:19px; text-align:center; margin:0 0 6px; }
   .sub { color:#9799b3; font-size:12px; text-align:center; margin-bottom:22px; }
   label { display:block; font-size:12px; color:#9799b3; margin:12px 0 4px; }
-  input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.14);
-          background:rgba(255,255,255,.06); color:#e8e8f2; font-size:14px; box-sizing:border-box; }
+  input, textarea { width:100%; padding:10px 12px; border-radius:10px;
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(255,255,255,.06); color:#e8e8f2; font-size:14px; box-sizing:border-box;
+          font-family:inherit; resize:vertical; }
   button { width:100%; margin-top:22px; padding:11px; border:none; border-radius:10px;
            background:#6d5bd0; color:#fff; font-size:15px; cursor:pointer; }
   button:hover { background:#7d6be0; }
@@ -105,7 +113,11 @@ async function doLogin(){
                           password: document.getElementById("p").value})
   });
   if(r.ok){ location.href = "/"; }
-  else { document.getElementById("err").textContent = "账号或密码错误"; }
+  else {
+    let msg = "账号或密码错误";
+    try { const s = await r.json(); if (s.error) msg = s.error; } catch(e){}
+    document.getElementById("err").textContent = msg;
+  }
 }
 document.getElementById("p").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 </script>
@@ -164,8 +176,9 @@ _PAGE = """<!DOCTYPE html>
   .row { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; align-items:center; }
   .field { display:flex; flex-direction:column; gap:4px; }
   .field span { font-size:12px; color:#9799b3; }
-  input, select { padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.14);
-          background:rgba(255,255,255,.06); color:#e8e8f2; font-size:13px; min-width:110px; }
+  input, select, textarea { padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.14);
+          background:rgba(255,255,255,.06); color:#e8e8f2; font-size:13px; min-width:110px;
+          font-family:inherit; resize:vertical; box-sizing:border-box; }
   .btn { border:none; border-radius:10px; cursor:pointer; font-size:13px; padding:9px 16px; color:#fff; }
   .btn.primary { background:#6d5bd0; } .btn.primary:hover { background:#7d6be0; }
   .btn.warn { background:#b06d2c; } .btn.warn:hover { background:#c47b36; }
@@ -241,6 +254,23 @@ _PAGE = """<!DOCTYPE html>
     </div>
     <div class="muted">当前：<span id="a_current">…</span></div>
     <div class="msg" id="a_msg"></div>
+  </div>
+
+  <div class="panel">
+    <h2>🪪 机器人信息（Telegram 公开资料，保存即生效）</h2>
+    <div class="row">
+      <label class="field" style="flex:1 1 280px;"><span>机器人名字（≤64 字，留空 = 恢复 BotFather 默认）</span>
+        <input id="bi_name" maxlength="64" placeholder="🎰 娱乐机器人" style="min-width:280px;">
+      </label>
+      <label class="field" style="flex:1 1 560px;"><span>短简介（打开聊天界面时显示的一句话，≤120 字）</span>
+        <input id="bi_short" maxlength="120" placeholder="签到、红包、抽奖、24点…群内快乐制造机" style="min-width:560px;">
+      </label>
+      <label class="field" style="flex:1 1 100%;"><span>完整简介（机器人资料页 Description，≤512 字）</span>
+        <textarea id="bi_desc" maxlength="512" rows="3" style="width:100%;"></textarea>
+      </label>
+      <button class="btn primary" onclick="saveBotInfo()">💾 保存并应用</button>
+    </div>
+    <div class="msg" id="bi_msg"></div>
   </div>
 
   <div class="panel">
@@ -341,7 +371,29 @@ async function restartBot(){
   location.reload();
 }
 
-load(); setInterval(load, 10000); loadSettings(); loadGames(); loadAdmin();
+load(); setInterval(load, 10000); loadSettings(); loadGames(); loadAdmin(); loadBotInfo();
+
+// ---------------- 机器人信息 ----------------
+async function loadBotInfo(){
+  const s=await (await fetch("/api/bot_info")).json();
+  document.getElementById("bi_name").value=s.name||"";
+  document.getElementById("bi_short").value=s.short||"";
+  document.getElementById("bi_desc").value=s.desc||"";
+}
+
+async function saveBotInfo(){
+  const el=document.getElementById("bi_msg");
+  const r=await fetch("/api/bot_info",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      name: document.getElementById("bi_name").value,
+      short: document.getElementById("bi_short").value,
+      desc: document.getElementById("bi_desc").value,
+    })});
+  const s=await r.json().catch(()=>({}));
+  el.textContent = s.note || (r.ok ? "✅ 已保存" : "❌ "+(s.error||"保存失败"));
+  el.style.color = r.ok ? "#8ef0b4" : "#ff6b6b";
+}
 
 // ---------------- 管理员与答题默认奖励 ----------------
 
@@ -415,9 +467,21 @@ def index():
 @app.post("/api/login")
 def api_login():
     data = request.get_json(force=True, silent=True) or {}
+    ip = request.remote_addr or "?"
+    fails, locked_until = _login_fails.get(ip, (0, 0.0))
+    now = time.time()
+    if now < locked_until:
+        rest = int(locked_until - now) + 1
+        return jsonify(ok=False, error=f"失败次数过多，{rest} 秒后再试"), 429
     if db.verify_admin(data.get("username") or "", data.get("password") or ""):
+        _login_fails.pop(ip, None)
         session["admin"] = True
         return jsonify(ok=True)
+    fails += 1
+    if fails >= FAIL_LIMIT:
+        _login_fails[ip] = (0, now + LOCK_SECONDS)
+        return jsonify(ok=False, error=f"连续失败 {FAIL_LIMIT} 次，锁定 {LOCK_SECONDS // 60} 分钟"), 429
+    _login_fails[ip] = (fails, 0.0)
     return jsonify(ok=False), 401
 
 
@@ -593,6 +657,68 @@ def api_admin_set():
         db.set_setting("quiz_reward", stored.strip(" +"))
         note_parts.append(f"默认奖励 {stored}")
     return jsonify(ok=True, note="，".join(note_parts) or "无改动")
+
+
+# ---------------- 机器人公开信息（Telegram 资料，保存即生效） ----------------
+
+def _bot_token() -> str:
+    tok = os.environ.get("BOT_TOKEN") or ""
+    if not tok:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8-sig") as f:
+                tok = f.read().strip()
+    return tok
+
+
+def _tg_apply(path: str, payload: dict, proxy):
+    """直接调 Telegram setMyXxx 接口；返回 (成功?, 描述)."""
+    kw = {"json": payload, "timeout": 10}
+    if proxy:
+        kw["proxy"] = proxy
+    resp = httpx.post(f"https://api.telegram.org/bot{_bot_token()}/{path}", **kw)
+    result = resp.json()
+    if result.get("ok"):
+        return True, None
+    return False, result.get("description") or f"HTTP {resp.status_code}"
+
+
+@app.get("/api/bot_info")
+def botinfo_get():
+    return jsonify(
+        name=db.get_setting("bot_name") or "",
+        short=db.get_setting("bot_short_desc") or "",
+        desc=db.get_setting("bot_desc") or "",
+    )
+
+
+@app.post("/api/bot_info")
+def botinfo_set():
+    d = request.get_json(force=True, silent=True) or {}
+    name = str(d.get("name") or "").strip()[:64]
+    short = str(d.get("short") or "").strip()[:120]
+    desc = str(d.get("desc") or "").strip()[:512]
+    if name and re.match(r"^\s*/", name):
+        return jsonify(ok=False, error="名字请直接填文字，不要以 / 开头"), 400
+    db.set_setting("bot_name", name)
+    db.set_setting("bot_short_desc", short)
+    db.set_setting("bot_desc", desc)
+
+    if not _bot_token():
+        return jsonify(ok=True, note="已保存；未找到 token，重启机器人后自动应用")
+    proxy = _proxy_url()
+    try:
+        for path, payload in (
+            ("setMyName", {"name": name}),
+            ("setMyShortDescription", {"short_description": short}),
+            ("setMyDescription", {"description": desc}),
+        ):
+            ok, err = _tg_apply(path, payload, proxy)
+            if not ok:
+                return jsonify(ok=True, note=f"已保存；{path} 应用失败：{err}（重启机器人会重试）")
+    except Exception as e:
+        return jsonify(ok=True, note=f"已保存；实时应用失败（{e}），重启机器人后会自动应用")
+    return jsonify(ok=True, note="✅ 已保存并立即应用到 Telegram")
 
 
 def start(port: int = None):

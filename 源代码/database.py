@@ -2,6 +2,7 @@
 """数据库层：用户积分、签到、胜负统计（SQLite，自动建表）。"""
 
 import hashlib
+import datetime
 import os
 import re
 import sqlite3
@@ -12,6 +13,17 @@ DATA_DIR = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file_
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "bot_data.db")
 _lock = threading.Lock()
+
+CN_TZ = datetime.timezone(datetime.timedelta(hours=8))  # 北京时间，与服务器容器时区无关
+
+
+def today_date_cn():
+    """当前北京时间（datetime.date）。换日、连签、每日上限都用它，避免容器 UTC 造成 8 点才换日。"""
+    return datetime.datetime.now(CN_TZ).date()
+
+
+def today_cn() -> str:
+    return today_date_cn().isoformat()
 
 
 def _connect():

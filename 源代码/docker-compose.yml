@@ -9,6 +9,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - WEB_PORT=8080
       - DATA_DIR=/app/data
+      - TZ=Asia/Shanghai
       # 可选：容器直连不了 Telegram 时，在这里写死代理（Web 控制台的配置优先于此项）
       # - PROXY_URL=socks5://127.0.0.1:1080
       # 带账号密码写法：socks5://user:password@127.0.0.1:1080

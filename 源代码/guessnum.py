@@ -10,7 +10,6 @@
 猜中后自动开下一局。
 """
 
-import datetime
 import html
 import random
 
@@ -73,7 +72,7 @@ async def cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if num == target:
             name = html.escape(user.first_name or "群友")
-            day = datetime.date.today().isoformat()
+            day = db.today_cn()
             won = db.daily_wins_count(user.id, "guessnum", day)
             if won < DAILY_CAP:
                 db.add_points(user.id, REWARD)

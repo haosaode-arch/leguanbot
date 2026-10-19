@@ -39,11 +39,11 @@ def parse_reward(text: str):
 
 
 def _today_str() -> str:
-    return datetime.date.today().isoformat()
+    return db.today_cn()
 
 
 def _yesterday_str() -> str:
-    return (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    return (db.today_date_cn() - datetime.timedelta(days=1)).isoformat()
 
 
 async def cmd_signin(update: Update, context: ContextTypes.DEFAULT_TYPE):
