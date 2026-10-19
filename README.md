@@ -44,25 +44,62 @@
 
 ## 部署步骤（Docker）
 
-前提：目标机器装好 Docker + Docker Compose 插件。
+服务器上运行时，用 `docker-compose.server.yml` 直接拉取镜像（推荐，无需在服务器构建）；或用 `docker-compose.yml` 在本机 build。
 
 ```bash
 # 1. 配置 token（二选一）
 cp .env.example .env        # 然后编辑 .env 填入 BOT_TOKEN
 # 或者：把 token 存进同目录 token.txt，并在 docker-compose.yml 里解开挂载那一行
 
-# 2. 构建并启动
-docker compose up -d --build
+# 2. 首次拉取并启动（镜像名改成你自己的，见下文「发布到 GitHub」）
+docker compose -f docker-compose.server.yml pull
+docker compose -f docker-compose.server.yml up -d
 
 # 3. 查看日志 / 停止
-docker compose logs -f
-docker compose down
+docker compose -f docker-compose.server.yml logs -f
+docker compose -f docker-compose.server.yml down
 ```
 
 - **Web 控制台**：`http://服务器IP:8080` —— 运行状态、用户/金币总量、Top10 排行榜，10 秒自动刷新；端口在 `docker-compose.yml` 左边改。
 - 数据持久化在 `./data/bot_data.db`，重建容器不丢数据。
-- Token 也可以用容器环境变量 `BOT_TOKEN` 传，两种方式都支持。
 - `/setprivacy → Disable` 或把 bot 设为群管理员，这一步与部署方式无关，必做。
+
+## 发布到 GitHub（自动打包镜像）
+
+每次更新代码后，GitHub Actions 会**自动构建 Docker 镜像**并发布，服务器一条命令拉取最新版。只需配置一次：
+
+1. **建仓库**：注册/登录 [github.com](https://github.com) → 右上角 ➕ → **New repository** → 名称如 `tg-funbot` → 选 **Public** → 不要勾选自动生成 README → **Create**。
+2. **关联远程**（Windows 上已装 git）：
+   ```bash
+   cd "C:\Users\Administrator\Desktop\TG机器人"
+   git remote add origin https://github.com/你的用户名/tg-funbot.git
+   ```
+3. **首次推送**：双击 **推送更新.bat**（首次会弹出浏览器让你登录 GitHub 授权）。
+4. 推送后稍等 2–5 分钟，GitHub 仓库 **Actions** 标签页会自动完成构建并发布镜像：
+   `ghcr.io/你的用户名/tg-funbot:latest`
+5. **服务器拉取**：把这行镜像地址填进 `docker-compose.server.yml` 的 `image:` 字段，然后按上面「部署步骤（Docker）」执行即可。
+
+> 免密：GitHub 内置的 GITHUB_TOKEN 会自动授权推送 GHCR，不需要配置任何 token。
+
+## 以后每次更新（3 步）
+
+```bash
+1. 双击「推送更新.bat」                # 自动 add/commit/push
+2. 等 Actions 构建完成（约 2–5 分钟）   # 仓库 Actions 页面看进度的绿勾
+3. 服务器上执行：
+   docker compose -f docker-compose.server.yml pull
+   docker compose -f docker-compose.server.yml up -d
+```
+
+金币数据在服务器 `./data/bot_data.db`，更新镜像不会丢失。
+
+## 镜像版本
+
+- `latest` —— 最新构建
+- `v<提交号>` 格式（如 `va9942c7`）—— 每次构建的历史版本，可随时回滚：
+  `docker run ghcr.io/你的用户名/tg-funbot:va9942c7`
+
+如果服务器网络拉 GHCR 慢/被墙：给 Docker daemon 配代理（`/etc/docker/daemon.json` 或 systemd 环境变量 `HTTP_PROXY/HTTPS_PROXY`），或改用国内镜像站加速。
 
 ## 数据与运维
 
@@ -75,13 +112,17 @@ docker compose down
 
 ```
 bot.py        主入口：注册命令、中文命令分发、帮助菜单、启动 Web
-database.py   SQLite 数据层（建表/读写积分/排行榜/全局统计）
+database.py   SQLite 数据层（建表/读写积分/设置/排行榜/全局统计）
 economy.py    签到、余额、排行
 fun.py        骰子、硬币、猜拳、随机点人
 lottery.py    抽奖、俄罗斯轮盘
 redpacket.py  手气红包
 jielong.py    词语接龙
-web.py        Web 控制台（Flask，端口 8080）
-Dockerfile / docker-compose.yml / .env.example   Docker 部署
-启动.bat       Windows 一键启动
+web.py        Web 控制台（登录/仪表盘/代理设置/重启）
+Dockerfile / docker-compose.yml        本机构建部署
+docker-compose.server.yml             服务器拉取镜像部署
+.github/workflows/build.yml           GitHub Actions 自动打包
+推送更新.bat        每次更新的推送一键脚本
+启动.bat           Windows 直跑一键脚本
+.env.example       token 模板
 ```
