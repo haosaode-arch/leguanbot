@@ -5,6 +5,9 @@ data/
 bot_data.db
 *.db-journal
 
+# 版本备份只在本地留档，不占用 GitHub
+历史备份/
+
 # Python
 __pycache__/
 *.pyc
