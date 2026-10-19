@@ -94,6 +94,9 @@ async def cmd_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_lot_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
+    if not db.is_chat_authorized(chat_id):
+        await query.answer("本群未获得使用授权", show_alert=True)
+        return
     state = LOTTERIES.get(chat_id)
     if not state:
         await query.answer("这场抽奖已经结束啦", show_alert=True)
@@ -234,6 +237,9 @@ async def _roulette_cancel(context: ContextTypes.DEFAULT_TYPE):
 async def cb_rou_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
+    if not db.is_chat_authorized(chat_id):
+        await query.answer("本群未获得使用授权", show_alert=True)
+        return
     state = ROULETTES.get(chat_id)
     if not state:
         await query.answer("这一局已经结束了", show_alert=True)

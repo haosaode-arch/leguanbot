@@ -106,6 +106,24 @@ def set_admin_ids_text(text: str):
     set_setting("admin_ids", ",".join(re.findall(r"\d+", text or "")))
 
 
+# ---------------- 群聊授权白名单（Web 后台配置） ----------------
+
+def get_auth_chats():
+    """授权群聊 ID 列表；列表为空 = 不限制。"""
+    raw = get_setting("auth_chats") or ""
+    return [int(x) for x in re.findall(r"-?\d+", raw)]
+
+
+def is_chat_authorized(chat_id) -> bool:
+    ids = get_auth_chats()
+    return (not ids) or chat_id in ids
+
+
+def set_auth_chats_text(text: str):
+    """群 ID 通常为负数：-100xxxxxxxxxx。逗号/空格/换行分隔均可。"""
+    set_setting("auth_chats", ",".join(re.findall(r"-?\d+", text or "")))
+
+
 # ---------------- 每日获奖次数限制（防无限刷币） ----------------
 
 def daily_wins_count(user_id: int, game: str, day: str) -> int:

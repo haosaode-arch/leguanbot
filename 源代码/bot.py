@@ -48,10 +48,17 @@ GAME_NAMES = db.GAME_NAMES  # key -> 中文名
 
 
 def gated(game: str, handler):
-    """命令闸门：若该游戏在 Web 端被关闭，回复提示并拦截。"""
+    """命令闸门：游戏开关 + 群聊授权白名单。"""
     name = GAME_NAMES.get(game, game)
 
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat = update.effective_chat
+        if chat.type in ("group", "supergroup"):
+            if not db.is_chat_authorized(chat.id):
+                await update.message.reply_text(
+                    "🚫 本群未获得使用授权。请联系管理员在 Web 后台「授权群聊」里添加本群 ID（群里发 /群ID 可查看）。"
+                )
+                return
         if not db.is_game_enabled(game):
             await update.message.reply_text(
                 f"⛔「{name}」目前已被管理员临时关闭，请稍后再试～"
@@ -60,6 +67,16 @@ def gated(game: str, handler):
         await handler(update, context)
 
     return wrapper
+
+
+async def cmd_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/群ID —— 查看本群和自己的 ID（任何群可用，便于后台授权）"""
+    chat = update.effective_chat
+    user = update.effective_user
+    lines = [f"👤 你的 ID：<code>{user.id}</code>"]
+    if chat.type in ("group", "supergroup"):
+        lines.append(f"👥 本群 ID：<code>{chat.id}</code>（复制到后台「授权群聊」即可）")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 def build_help_text() -> str:
@@ -117,6 +134,7 @@ CHINESE_COMMANDS = {
     "决斗": gated("duel", duel.cmd_duel),
     "猜数字": gated("guessnum", guessnum.cmd),
     "猜": gated("guessnum", guessnum.cmd),
+    "群ID": cmd_chat_id,
     "帮助": None,  # 在下方 handler 内指向 cmd_help
 }
 
@@ -237,6 +255,7 @@ def main():
     app.add_handler(CommandHandler(["math24"], gated("math24", math24.cmd)))
     app.add_handler(CommandHandler(["duel"], gated("duel", duel.cmd_duel)))
     app.add_handler(CommandHandler(["guess"], gated("guessnum", guessnum.cmd)))
+    app.add_handler(CommandHandler(["chatid", "groupid"], cmd_chat_id))
 
     # 中文命令
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^/"), chinese_command))

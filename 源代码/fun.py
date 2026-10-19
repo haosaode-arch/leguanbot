@@ -27,9 +27,11 @@ _last_picked = {}    # chat_id -> [最近被点过的 uid，避免连续点到�
 
 
 def record_activity(update: Update):
-    """在消息处理器入口调用，记录活跃用户。"""
+    """在消息处理器入口调用，记录活跃用户（只记已授权群）。"""
     chat, user = update.effective_chat, update.effective_user
     if user is None or user.is_bot or chat.type not in ("group", "supergroup"):
+        return
+    if not db.is_chat_authorized(chat.id):
         return
     bucket = _recent_active.setdefault(chat.id, {})
     bucket[user.id] = (user, time.time())

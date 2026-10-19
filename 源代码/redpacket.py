@@ -117,6 +117,9 @@ def _split(total: int, n: int):
 
 async def cb_grab(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not db.is_chat_authorized(query.message.chat_id):
+        await query.answer("本群未获得使用授权", show_alert=True)
+        return
     token = query.data.split(":", 1)[1]
     rp = REDPACKETS.get(token)
     if not rp:

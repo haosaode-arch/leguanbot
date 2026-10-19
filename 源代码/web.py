@@ -231,6 +231,9 @@ _PAGE = """<!DOCTYPE html>
       <label class="field" style="flex:1 1 320px;"><span>机器人管理员 TG ID（逗号/空格/换行分隔，拥有发题、结束接龙等权限）</span>
         <input id="a_ids" placeholder="123456789, 987654321" style="min-width:300px;">
       </label>
+      <label class="field" style="flex:1 1 320px;"><span>授权群聊 ID（负数，逗号/换行分隔；留空 = 不限制。群里发 /群ID 获取）</span>
+        <input id="a_chats" placeholder="-100123456, -100987654" style="min-width:300px;">
+      </label>
       <label class="field" style="flex:1 1 260px;"><span>答题默认奖励（N金币 / N金币+奖品 / 纯奖品）</span>
         <input id="a_reward" placeholder="100金币、100金币+电影票、一杯奶茶" style="min-width:260px;">
       </label>
@@ -350,18 +353,23 @@ function adminMsg(text, ok){
 async function loadAdmin(){
   const s=await (await fetch("/api/admin_settings")).json();
   document.getElementById("a_ids").value=s.admin_ids_text||"";
+  document.getElementById("a_chats").value=s.auth_chats_text||"";
   document.getElementById("a_reward").value=s.reward||"100金币";
+  const chats = s.auth_chats.length ? s.auth_chats.length + " 个" : "未设置（不限制）";
   document.getElementById("a_current").textContent =
-    "管理员 " + (s.admin_ids.length? s.admin_ids.length + " 人：" + s.admin_ids.join(", ") : "未设置") +
+    "管理员 " + (s.admin_ids.length? s.admin_ids.length + " 人" : "未设置") +
+    " ｜ 授权群 " + chats +
     " ｜ 默认奖励 " + s.reward;
 }
 
 async function saveAdmin(){
-  const ids=document.getElementById("a_ids").value;
-  const reward=document.getElementById("a_reward").value;
   const r=await fetch("/api/admin_settings",{method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({admin_ids_text:ids, reward:reward})});
+    body:JSON.stringify({
+      admin_ids_text: document.getElementById("a_ids").value,
+      auth_chats_text: document.getElementById("a_chats").value,
+      reward: document.getElementById("a_reward").value,
+    })});
   const s=await r.json().catch(()=>({}));
   adminMsg(r.ok ? "✅ 已保存"+(s.note? "，"+s.note : "") : ("❌ "+(s.error||"保存失败")), r.ok);
   if(r.ok) loadAdmin();
@@ -552,9 +560,12 @@ def api_games_toggle():
 @app.get("/api/admin_settings")
 def api_admin_get():
     ids = db.get_admin_ids()
+    chats = db.get_auth_chats()
     return jsonify(
         admin_ids_text=",".join(str(i) for i in ids),
         admin_ids=ids,
+        auth_chats_text=",".join(str(i) for i in chats),
+        auth_chats=chats,
         reward=db.get_setting("quiz_reward") or "100金币",
     )
 
@@ -566,6 +577,10 @@ def api_admin_set():
     if d.get("admin_ids_text") is not None:
         db.set_admin_ids_text(str(d["admin_ids_text"]))
         note_parts.append(f"管理员 {len(db.get_admin_ids())} 人")
+    if d.get("auth_chats_text") is not None:
+        db.set_auth_chats_text(str(d["auth_chats_text"]))
+        chats_n = len(db.get_auth_chats())
+        note_parts.append(f"授权群 {chats_n} 个" + ("（不限制）" if chats_n == 0 else ""))
     if d.get("reward"):
         reward = str(d["reward"]).strip()
         gold, custom = economy.parse_reward(reward)

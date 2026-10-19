@@ -103,6 +103,9 @@ async def _expire(context: ContextTypes.DEFAULT_TYPE):
 async def cb_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = int(query.data.split(":", 1)[1])
+    if not db.is_chat_authorized(chat_id):
+        await query.answer("本群未获得使用授权", show_alert=True)
+        return
     state = PENDING.get(chat_id)
     if not state:
         await query.answer("这场决斗已经超时或结束了", show_alert=True)
