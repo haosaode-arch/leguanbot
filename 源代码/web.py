@@ -25,6 +25,7 @@ PROXY_TYPES = ["socks5", "socks5h", "socks4", "http"]
 
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
+app.jinja_env.autoescape = True  # noqa：模板为纯字符串，防意外注入
 
 
 def _display_name(row):
@@ -152,6 +153,10 @@ _PAGE = """<!DOCTYPE html>
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
   .chip { background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1);
           border-radius:20px; padding:4px 12px; font-size:12px; color:#c8c9de; }
+  .chip.ctl { cursor:pointer; user-select:none; padding:8px 16px; font-size:13px; }
+  .chip.ctl:hover { background:rgba(255,255,255,.15); }
+  .chip.on  { border-color: rgba(73,209,141,.55); color:#8ef0b4; }
+  .chip.off { opacity:.5; border-color: rgba(255,107,107,.45); color:#ff9a9a; }
   .muted { color:#9799b3; font-size:13px; }
   footer { margin-top: 26px; color:#6f7188; font-size:12px; }
   /* 代理表单 */
@@ -217,6 +222,13 @@ _PAGE = """<!DOCTYPE html>
       <span class="msg" id="p_msg"></span>
     </div>
     <div class="muted">当前生效：<span id="p_current">…</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>🎛 游戏开关（点击即时生效，无需重启）</h2>
+    <div class="chips" id="games"><span class="muted">加载中……</span></div>
+    <div class="muted" style="margin-top:10px;">关闭后群里对应命令立即停用；进行中的抽奖/轮盘/红包不受影响。答题游戏：</div>
+    <div class="muted">群内 <code>/发题</code> 发题 · 私聊 <code>/出题 题目｜答案｜奖励</code> 创建 · <code>/答题奖励</code> 设默认奖励</div>
   </div>
 
   <div class="panel">
@@ -310,7 +322,33 @@ async function restartBot(){
   location.reload();
 }
 
-load(); setInterval(load, 10000); loadSettings();
+load(); setInterval(load, 10000); loadSettings(); loadGames();
+
+function gameMsg(text, ok){
+  // 复用代理提示区域显示反馈可能离开关太远，单独用 console + 按钮 self-state 提示
+  console.log(text);
+}
+
+async function loadGames(){
+  const r=await fetch("/api/games");
+  if(r.status===401){ location="/login"; return; }
+  const games=await r.json();
+  const box=document.getElementById("games");
+  box.innerHTML="";
+  for(const [k,v] of Object.entries(games)){
+    const btn=document.createElement("button");
+    btn.className="chip ctl "+(v.enabled?"on":"off");
+    btn.textContent=(v.enabled?"✅ ":"⛔ ")+v.name+"("+k+")";
+    btn.title="点击" + (v.enabled?"关闭":"开启") + v.name;
+    btn.onclick=async()=>{
+      const resp=await fetch("/api/games",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({key:k, enabled:!v.enabled})});
+      if(resp.ok){ loadGames(); }
+    };
+    box.appendChild(btn);
+  }
+}
 </script>
 </body>
 </html>"""
@@ -450,6 +488,25 @@ def api_restart():
 @app.get("/healthz")
 def healthz():
     return jsonify(ok=True)
+
+
+# ---------------- 游戏独立开关 ----------------
+
+@app.get("/api/games")
+def api_games_list():
+    return jsonify(
+        {k: {"name": v, "enabled": db.is_game_enabled(k)} for k, v in db.GAME_NAMES.items()}
+    )
+
+
+@app.post("/api/games")
+def api_games_toggle():
+    d = request.get_json(force=True, silent=True) or {}
+    key = d.get("key")
+    if key not in db.GAME_NAMES:
+        return jsonify(ok=False, error="未知游戏"), 400
+    db.set_game_enabled(key, bool(d.get("enabled")))
+    return jsonify(ok=True, key=key, enabled=db.is_game_enabled(key))
 
 
 def start(port: int = None):

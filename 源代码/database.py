@@ -54,6 +54,37 @@ def verify_admin(username: str, password: str) -> bool:
     return username == expected_user and hash_password(password or "") == expected_hash
 
 
+# ---------------- 游戏开关 ----------------
+
+GAME_NAMES = {
+    "signin":    "签到",
+    "top":       "排行榜",
+    "dice":      "骰子",
+    "coin":      "抛硬币",
+    "rps":       "猜拳",
+    "pick":      "随机点人",
+    "lottery":   "抽奖",
+    "roulette":  "轮盘",
+    "redpacket": "红包",
+    "jielong":   "接龙",
+    "quiz":      "答题",
+}
+
+
+def is_game_enabled(game: str) -> bool:
+    """未设置过的一律视为开启。"""
+    return get_setting(f"game_{game}") != "0"
+
+
+def set_game_enabled(game: str, enabled: bool):
+    if game in GAME_NAMES:
+        set_setting(f"game_{game}", "1" if enabled else "0")
+
+
+def game_states():
+    return {k: is_game_enabled(k) for k in GAME_NAMES}
+
+
 def init_db():
     with _lock:
         conn = _connect()
