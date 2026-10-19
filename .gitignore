@@ -1,0 +1,13 @@
+# 密钥与本地数据，一律不要上传 GitHub
+.env
+token.txt
+data/
+bot_data.db
+*.db-journal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

@@ -1,0 +1,57 @@
+name: 打包镜像 (Build & Push)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}   # 支持 manual 点击重新打包
+
+jobs:
+  build:
+    name: 构建并推送 Docker 镜像
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io 镜像名必须全小写
+      - name: 计算镜像名
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=v
+
+      - name: 推送镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 完成
+        run: |
+          echo "✅ 镜像已发布："
+          echo "   ${{ steps.img.outputs.name }}:latest"
+          echo "服务器更新命令："
+          echo "   docker compose -f docker-compose.server.yml pull && docker compose -f docker-compose.server.yml up -d"

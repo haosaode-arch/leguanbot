@@ -1,0 +1,22 @@
+services:
+  tg-funbot:
+    build: .
+    image: tg-funbot
+    container_name: tg-funbot
+    restart: unless-stopped
+    environment:
+      # 方式一：token 放到同目录 .env 文件里（BOT_TOKEN=xxx），或直接设系统环境变量
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEB_PORT=8080
+      - DATA_DIR=/app/data
+      # 可选：容器直连不了 Telegram 时，在这里写死代理（Web 控制台的配置优先于此项）
+      # - PROXY_URL=socks5://127.0.0.1:1080
+      # 带账号密码写法：socks5://user:password@127.0.0.1:1080
+    ports:
+      # 宿主机端口:容器端口，改左边即可
+      - "8080:8080"
+    volumes:
+      # 金币数据库持久化
+      - ./data:/app/data
+      # 方式二（可选）：和 compose 文件同目录放 token.txt，替代 BOT_TOKEN 环境变量
+      # - ./token.txt:/app/token.txt:ro

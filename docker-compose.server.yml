@@ -1,0 +1,21 @@
+# 服务器用：直接从 GHCR 拉取镜像，不在本机构建
+# 使用前把下面 image 里的 GitHub 用户名改成你自己的（拉一次会自动保存）
+
+services:
+  tg-funbot:
+    image: ghcr.io/你的GitHub用户名/tg-funbot:latest
+    container_name: tg-funbot
+    restart: unless-stopped
+    environment:
+      # token 二选一：环境变量 or 挂载 token.txt
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEB_PORT=8080
+      - DATA_DIR=/app/data
+      # 可选：写死代理（Web 控制台配置优先）
+      # - PROXY_URL=socks5://user:pass@192.168.1.10:1080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      # 可选：token 文件方式
+      # - ./token.txt:/app/token.txt:ro
