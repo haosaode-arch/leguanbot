@@ -277,10 +277,10 @@ def main():
 
         builder = Application.builder().token(token)
         if proxy_url:
-            try:
+            if hasattr(builder, "proxy"):  # PTB v21.4+ / v22
+                builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
+            else:  # 兼容旧版 PTB
                 builder = builder.proxy_url(proxy_url).get_updates_proxy_url(proxy_url)
-            except AttributeError:  # 兼容老版本 PTB
-                builder = builder.proxy_url(proxy_url)
         # 连接成功后把后台填写的机器人资料（名字/简介）推送到 Telegram
         builder = builder.post_init(_post_init_botinfo)
         app = builder.build()
