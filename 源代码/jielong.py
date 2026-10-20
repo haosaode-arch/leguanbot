@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """成语/词语接龙。规则：新词首字 = 上一个词尾字；词长 >= 2；不重复。"""
 
+import database as db
 from telegram import Update
 from telegram.ext import ContextTypes
 
-# chat_id -> {"tail": str, "words": list, "longest": str}
+# chat_id -> {"tail": str, "words": list, "longest": str, "users": {uid: [次数, 昵称]}, "starter": uid}
 CHAINS = {}
+
+CHAIN_KING_REWARD = 40   # 结盘接龙王奖励
+CHAIN_MIN_WORDS = 3      # 至少接满 3 个词才有奖励
 
 
 async def cmd_chain(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26,10 +30,19 @@ async def cmd_chain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text_arg in ("结束", "重开"):
         if state and (user.id == state.get("starter") or _is_admin(user, chat.id, context)):
             CHAINS.pop(chat.id, None)
-            await update.message.reply_text(
+            lines = [
                 f"🏁 接龙结束！本轮共接了 {len(state['words'])} 个词，"
                 f"最长的一个：{state['longest']}"
-            )
+            ]
+            # 接龙王：成功接词最多的人（至少接满 3 词，正词数快的足够说明有参与度）
+            users = state.get("users") or {}
+            if len(state["words"]) >= CHAIN_MIN_WORDS and users:
+                top_uid = max(users, key=lambda u: users[u][0])
+                top_n, top_name = users[top_uid]
+                if top_n >= 2:
+                    db.add_points(top_uid, CHAIN_KING_REWARD)
+                    lines.append(f"🏆 本轮接龙王：{top_name}（接上 {top_n} 个词）+{CHAIN_KING_REWARD} 金币！")
+            await update.message.reply_text("\n".join(lines))
         elif state:
             await update.message.reply_text("只有开局的人或管理员能结束接龙～")
         else:
@@ -61,6 +74,7 @@ async def cmd_chain(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "words": [word],
             "longest": word,
             "starter": user.id,
+            "users": {},
         }
         await update.message.reply_text(
             f"🔗 接龙开局！\n起点：{word}\n请下一位接以「{word[-1]}」开头的词"
@@ -84,10 +98,12 @@ async def cmd_chain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state["tail"] = word[-1]
     if len(word) > len(state["longest"]):
         state["longest"] = word
+    state["users"][user.id] = [state["users"].get(user.id, [0])[0] + 1, user.first_name or "群友"]
 
     await update.message.reply_text(
         f"✅ {user.first_name} 接上了「{word}」\n"
-        f"🔗 共 {len(state['words'])} 个词，请接「{state['tail']}」开头的！"
+        f"🔗 共 {len(state['words'])} 个词，请接「{state['tail']}」开头的！\n"
+        f"（谁接的词最多，结盘时就是接龙王 +{CHAIN_KING_REWARD} 金币）"
     )
 
 

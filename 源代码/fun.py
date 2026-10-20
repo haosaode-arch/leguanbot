@@ -2,6 +2,7 @@
 """小游戏：骰子、抛硬币、猜拳、随机点人。"""
 
 import random
+import re
 import time
 
 from telegram import Update
@@ -43,8 +44,50 @@ def record_activity(update: Update):
 
 # ---------- 指令 ----------
 
+STAKE_MIN, STAKE_MAX = 10, 10000
+
+
+async def _stake_from_args(context) -> int:
+    """从参数解析押注：'押100' / '100金币' → 金币数；'3' 这类纯数字返回 0（按骰子颗数理解）。"""
+    arg = "".join(context.args or []).strip()
+    if not arg:
+        return 0
+    if arg.isdigit():
+        return 0  # 骰子的旧用法：数字 = 颗数
+    m = re.search(r"押\s*(\d+)|(\d+)\s*金币", arg)
+    if not m:
+        return 0
+    return max(STAKE_MIN, min(int(m.group(1) or m.group(2)), STAKE_MAX))
+
+
 async def cmd_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/骰子 [数量] —— 掷 N 个六面骰子。"""
+    """/骰子 [数量] —— 掷骰子；/骰子 押100 —— 压单颗骰子：≥4 赢等额，≤3 输等额。"""
+    user = update.effective_user
+    stake = await _stake_from_args(context)
+    chat = update.effective_chat
+
+    # ---- 押注玩法（单颗真·TG 骰子动画，≥4 点赢） ----
+    if stake:
+        row = db.ensure_user(user.id)
+        if row["points"] < stake:
+            await update.message.reply_text(
+                f"💰 金币不够押（当前 {row['points']}，要 {STAKE_MIN}~{STAKE_MAX} 的押注），先 /签到 攒一攒～"
+            )
+            return
+        dice_msg = await context.bot.send_dice(chat.id, emoji="🎲")
+        import asyncio
+        await asyncio.sleep(1.2)
+        v = dice_msg.dice.value
+        if v >= 4:
+            db.add_points(user.id, stake)
+            db.update_user(user.id, wins=row["wins"] + 1, username=user.username, first_name=user.first_name)
+            await update.message.reply_text(f"🎲 掷出 {v} 点（≥4）—— 赢了！ +{stake} 金币 🎉")
+        else:
+            db.add_points(user.id, -stake)
+            db.update_user(user.id, losses=row["losses"] + 1, username=user.username, first_name=user.first_name)
+            await update.message.reply_text(f"🎲 掷出 {v} 点（≤3）—— 输了… -{stake} 金币 😭")
+        return
+
     count = 1
     if context.args:
         try:
@@ -61,7 +104,32 @@ async def cmd_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/硬币 —— 抛硬币。"""
+    """/硬币 —— 抛硬币；/硬币 押100 —— 押正面：正面赢等额，反面输等额。"""
+    user = update.effective_user
+    stake = await _stake_from_args(context)
+
+    if stake:
+        row = db.ensure_user(user.id)
+        if row["points"] < stake:
+            await update.message.reply_text(
+                f"💰 金币不够押（当前 {row['points']}），先 /签到 攒一攒～"
+            )
+            return
+        result = random.choice(["正面", "反面"])
+        face = "🌕" if result == "正面" else "🌑"
+        if result == "正面":
+            db.add_points(user.id, stake)
+            db.update_user(user.id, wins=row["wins"] + 1, username=user.username, first_name=user.first_name)
+            verdict = f"押正面 ✅ —— 赢了！ +{stake} 金币 🎉"
+        else:
+            db.add_points(user.id, -stake)
+            db.update_user(user.id, losses=row["losses"] + 1, username=user.username, first_name=user.first_name)
+            verdict = f"押正面 ❌（开的是反面）—— 输了… -{stake} 金币 😭"
+        await update.message.reply_text(
+            f"🪙 硬币转动中……\n开奖：{result} {face}\n{verdict}"
+        )
+        return
+
     result = random.choice(["正面 🌕", "反面 🌑"])
     await update.message.reply_text(f"🪙 硬币转动中……\n结果是：{result}！")
 

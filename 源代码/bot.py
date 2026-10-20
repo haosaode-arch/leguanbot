@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.parse
 
-from telegram import Update, error as tg_error
+from telegram import Update, error as tg_error, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -99,13 +99,13 @@ def build_help_text() -> str:
         f"　/红包 总额 [份数] —— 手气红包，点按钮开抢{mark('redpacket')}\n"
         f"　/点人 问题 —— 随机 @ 一个最近活跃的群友{mark('pick')}\n\n"
         "🎲 小游戏\n"
-        f"　/骰子 [数量] —— 掷六面骰{mark('dice')}\n"
-        f"　/硬币 —— 抛硬币{mark('coin')}\n"
-        f"　/猜拳 石头｜剪刀｜布 —— 与机器人猜拳赢金币{mark('rps')}\n\n"
+        f"　/骰子 [数量] —— 掷六面骰；/骰子 押100 加注（≥4 点赢）{mark('dice')}\n"
+        f"　/硬币 —— 抛硬币；/硬币 押100 押正面翻倍{mark('coin')}\n"
+        f"　/猜拳 石头｜剪刀｜布 —— 与机器人猜拳，赢+80 输-50{mark('rps')}\n\n"
         "🧩 接龙\n"
         f"　/接龙 词语 —— 开局或接词{mark('jielong')}\n"
         "　/接龙 —— 查看进度\n"
-        "　/接龙 结束 —— （开局者/管理员）结束\n\n"
+        f"　/接龙 结束 —— 结束并给接得最多的群友发\"接龙王\"+40 金币\n\n"
         "🎯 答题\n"
         f"　/出题 题目｜标准答案｜奖励 — （私聊）管理员出题{mark('quiz')}\n"
         "　/发题 —— （群里）发布暂存的题目\n"
@@ -214,6 +214,45 @@ async def apply_bot_info(bot):
             await getattr(bot, method)(value)
         except Exception as exc:
             print(f"⚠️ 应用机器人资料失败({method}): {exc}")
+
+    # Telegram 原生命令菜单（聊天框旁的蓝色"菜单"按钮 + 输入 / 触发列表）
+    # 注意：菜单命令名只接受英文小写/数字（TG 规则），说明文字用中文；对应接口都在代码里注册过英文 handler
+    menu_private = [
+        BotCommand("signin", "每日签到领金币"),
+        BotCommand("balance", "查看钱包和战绩"),
+        BotCommand("top", "金币排行榜"),
+        BotCommand("dice", "掷骰子（可押注）"),
+        BotCommand("coin", "抛硬币（可押注）"),
+        BotCommand("rps", "石头剪刀布"),
+        BotCommand("redpacket", "发手气红包"),
+        BotCommand("ask", "管理员私聊出题"),
+        BotCommand("help", "完整功能菜单"),
+    ]
+    menu_group = [
+        BotCommand("signin", "每日签到领金币"),
+        BotCommand("lottery", "发起定时抽奖"),
+        BotCommand("roulette", "俄罗斯轮盘"),
+        BotCommand("redpacket", "发手气红包"),
+        BotCommand("pick", "随机点一个群友"),
+        BotCommand("dice", "掷骰子（可押注）"),
+        BotCommand("coin", "抛硬币（可押注）"),
+        BotCommand("rps", "石头剪刀布"),
+        BotCommand("chain", "词语接龙"),
+        BotCommand("math24", "24点大挑战"),
+        BotCommand("duel", "回复消息找人决斗"),
+        BotCommand("guess", "猜数字"),
+        BotCommand("publish", "发布已出的题目"),
+        BotCommand("help", "完整功能菜单"),
+    ]
+    try:
+        await bot.set_my_commands(menu_private)
+    except Exception as exc:
+        print(f"⚠️ 设置私聊菜单失败: {exc}")
+    try:
+        from telegram import BotCommandScopeAllGroupChats
+        await bot.set_my_commands(menu_group, scope=BotCommandScopeAllGroupChats())
+    except Exception as exc:
+        print(f"⚠️ 设置群聊菜单失败: {exc}")
 
 
 async def _post_init_botinfo(application):
