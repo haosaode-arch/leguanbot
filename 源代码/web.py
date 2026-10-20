@@ -257,6 +257,19 @@ _PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="panel">
+    <h2>🤖 机器人 Token（优先级：后台填写 > 环境变量 BOT_TOKEN > token.txt）</h2>
+    <div class="row">
+      <label class="field" style="flex:1 1 520px;"><span>Token（形如 123456789:AAxxxx……，留空不动旧值）</span>
+        <input id="tk_input" type="password" placeholder="123456789:AAxxxxxxxxxxxxxxxxxxxxx" style="min-width:520px;">
+      </label>
+      <button class="btn primary" onclick="saveToken()">💾 保存</button>
+      <button class="btn ghost" onclick="testToken()">🧪 测试连接</button>
+    </div>
+    <div class="muted">已配置：<span id="tk_now">…</span>（连上 Telegram 后这里会显示 @机器人用户名）</div>
+    <div class="msg" id="tk_msg"></div>
+  </div>
+
+  <div class="panel">
     <h2>🪪 机器人信息（Telegram 公开资料，保存即生效）</h2>
     <div class="row">
       <label class="field" style="flex:1 1 280px;"><span>机器人名字（≤64 字，留空 = 恢复 BotFather 默认）</span>
@@ -371,7 +384,7 @@ async function restartBot(){
   location.reload();
 }
 
-load(); setInterval(load, 10000); loadSettings(); loadGames(); loadAdmin(); loadBotInfo();
+load(); setInterval(load, 10000); loadSettings(); loadGames(); loadAdmin(); loadBotInfo(); loadToken();
 
 // ---------------- 机器人信息 ----------------
 async function loadBotInfo(){
@@ -393,6 +406,36 @@ async function saveBotInfo(){
   const s=await r.json().catch(()=>({}));
   el.textContent = s.note || (r.ok ? "✅ 已保存" : "❌ "+(s.error||"保存失败"));
   el.style.color = r.ok ? "#8ef0b4" : "#ff6b6b";
+}
+
+// ---------------- 机器人 Token ----------------
+async function loadToken(){
+  const s=await (await fetch("/api/token_info")).json();
+  document.getElementById("tk_now").textContent = s.text || "未配置";
+}
+
+async function saveToken(){
+  const el=document.getElementById("tk_msg");
+  const t=document.getElementById("tk_input").value.trim();
+  if(!t){ el.textContent="❌ 请先粘贴 Token；留空 = 保持旧值"; el.style.color="#ff6b6b"; return; }
+  const r=await fetch("/api/token_save",{method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:t})});
+  const s=await r.json().catch(()=>({}));
+  el.textContent = s.note || (r.ok ? "✅ 已保存" : "❌ "+(s.error||"保存失败"));
+  el.style.color = r.ok ? "#8ef0b4" : "#ff6b6b";
+  document.getElementById("tk_input").value = "";
+  loadToken();
+}
+
+async function testToken(){
+  const el=document.getElementById("tk_msg");
+  el.textContent = "🧪 正在测试（会用上方代理设置）……"; el.style.color = "";
+  const t=document.getElementById("tk_input").value.trim();
+  const r=await fetch("/api/token_test",{method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:t})});
+  const s=await r.json().catch(()=>({}));
+  if(s.ok){ el.textContent = "✅ Token 有效，机器人是 @"+s.username; el.style.color="#8ef0b4"; }
+  else { el.textContent = "❌ "+(s.error||"测试失败"); el.style.color="#ff6b6b"; }
 }
 
 // ---------------- 管理员与答题默认奖励 ----------------
@@ -556,6 +599,7 @@ def set_proxy_settings():
     pw = d.get("pass")
     if pw:
         db.set_setting("proxy_pass", str(pw))
+    _notify_backend_change()
     return jsonify(ok=True)
 
 
@@ -659,16 +703,72 @@ def api_admin_set():
     return jsonify(ok=True, note="，".join(note_parts) or "无改动")
 
 
-# ---------------- 机器人公开信息（Telegram 资料，保存即生效） ----------------
+# ---------------- 机器人 Token / 公开信息（保存即生效） ----------------
 
-def _bot_token() -> str:
-    tok = os.environ.get("BOT_TOKEN") or ""
-    if not tok:
-        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8-sig") as f:
-                tok = f.read().strip()
+TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{20,}$")
+
+
+def _bot_token_anywhere() -> str:
+    """后台填写 > 环境变量 BOT_TOKEN > token.txt（与 bot.py 读取顺序一致）。"""
+    tok = (db.get_setting("bot_token") or "").strip()
+    if tok:
+        return tok
+    tok = (os.environ.get("BOT_TOKEN") or "").strip()
+    if tok:
+        return tok
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
+    if os.path.exists(p):
+        with open(p, "r", encoding="utf-8-sig") as f:
+            tok = f.read().strip()
     return tok
+
+
+def _notify_backend_change():
+    """Token/代理配置变化都更新标记，等待中的 bot 进程会自动唤醒重连。"""
+    db.set_setting("bot_apply_ts", str(time.time()))
+
+
+@app.get("/api/token_info")
+def token_info():
+    tok = _bot_token_anywhere()
+    if not tok:
+        return jsonify(text="未配置（填写后自动连接）", has=False)
+    head = tok.split(":", 1)[0]
+    tail = tok[-4:] if len(tok) > 8 else ""
+    return jsonify(text=f"ID {head} · ****{tail}", has=True)
+
+
+@app.post("/api/token_save")
+def token_save():
+    d = request.get_json(force=True, silent=True) or {}
+    tok = str(d.get("token") or "").strip()
+    if not TOKEN_RE.match(tok):
+        return jsonify(ok=False, error="格式不像 Token（应为 123456789:AAxxxx 这种一长串）"), 400
+    db.set_setting("bot_token", tok)
+    _notify_backend_change()
+    return jsonify(ok=True, note="✅ 已保存；未运行时会自动连接，已运行请点右上角「重启机器人」")
+
+
+@app.post("/api/token_test")
+def token_test():
+    d = request.get_json(force=True, silent=True) or {}
+    tok = str(d.get("token") or "").strip() or _bot_token_anywhere()
+    if not tok:
+        return jsonify(ok=False, error="尚未配置 Token，先粘贴再测")
+    if not TOKEN_RE.match(tok):
+        return jsonify(ok=False, error="格式不像 Token")
+    proxy = _proxy_url()
+    kw = {"timeout": 10}
+    if proxy:
+        kw["proxy"] = proxy
+    try:
+        resp = httpx.post(f"https://api.telegram.org/bot{tok}/getMe", **kw)
+        res = resp.json()
+        if res.get("ok"):
+            return jsonify(ok=True, username=res["result"].get("username") or "?")
+        return jsonify(ok=False, error=res.get("description") or f"HTTP {resp.status_code}")
+    except Exception as e:
+        return jsonify(ok=False, error=f"连不上 Telegram：{type(e).__name__}（未配代理或代理不通？）")
 
 
 def _tg_apply(path: str, payload: dict, proxy):
@@ -676,7 +776,7 @@ def _tg_apply(path: str, payload: dict, proxy):
     kw = {"json": payload, "timeout": 10}
     if proxy:
         kw["proxy"] = proxy
-    resp = httpx.post(f"https://api.telegram.org/bot{_bot_token()}/{path}", **kw)
+    resp = httpx.post(f"https://api.telegram.org/bot{_bot_token_anywhere()}/{path}", **kw)
     result = resp.json()
     if result.get("ok"):
         return True, None
@@ -704,8 +804,8 @@ def botinfo_set():
     db.set_setting("bot_short_desc", short)
     db.set_setting("bot_desc", desc)
 
-    if not _bot_token():
-        return jsonify(ok=True, note="已保存；未找到 token，重启机器人后自动应用")
+    if not _bot_token_anywhere():
+        return jsonify(ok=True, note="已保存；未找到 Token，到「🤖 机器人 Token」面板填写后自动连接并应用")
     proxy = _proxy_url()
     try:
         for path, payload in (

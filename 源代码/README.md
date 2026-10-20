@@ -26,14 +26,16 @@
 ## 部署步骤（Windows 裸跑）
 
 1. **拿 token**：TG 里找 [@BotFather](https://t.me/BotFather) → `/newbot` → 复制 `123456:ABC-xxx` 格式的 token。
-2. 把 token 粘贴保存为本目录下的 `token.txt`（一行即可）。
-3. 双击 **启动.bat**（自动装依赖并启动）；或手动：
+2. 双击 **启动.bat**（自动装依赖并启动）；或手动：
    ```
    pip install -r requirements.txt
    python bot.py
    ```
-4. 在 BotFather 发 `/setprivacy` → 选你的 bot → **Disable**（否则机器人看不到群消息，"点人"功能失效）。也可以直接把机器人设为**群管理员**。
-5. 把机器人拉进群，发 `/帮助` 试试！
+   > 启动**不做任何检测**：没有任何 Token 时机器人只开 Web 后台并安静等待，**不会报错退出**。
+3. 打开控制台 `http://127.0.0.1:8080` → 「🤖 机器人 Token」面板粘贴保存 → 自动连接（也支持环境变量 BOT_TOKEN / token.txt，后台填写优先）。
+4. 服务器连不上 Telegram 的，再在「代理设置」里填代理（宿主机局域网 IP），保存后同样自动生效。
+5. 在 BotFather 发 `/setprivacy` → 选你的 bot → **Disable**（否则机器人看不到群消息，"点人"功能失效）。也可以直接把机器人设为**群管理员**。
+6. 把机器人拉进群，发 `/帮助` 试试！
 
 ## Web 控制台
 

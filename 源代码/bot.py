@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 """TG 娱乐机器人主入口。
 
-Token 读取顺序：环境变量 BOT_TOKEN → 同目录 token.txt。
+启动不做任何网络/token 检测：Web 后台先跑起来，后台没配置就安静等待。
+Token 读取顺序：Web 后台填写 > 环境变量 BOT_TOKEN > 同目录 token.txt。
+后台保存 Token/代理后无需重启，自动用新配置连接。
 运行：python bot.py
 """
 
 import logging
 import os
-import sys
 import threading
+import time
 import urllib.parse
 
-from telegram import Update
+from telegram import Update, error as tg_error
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -218,44 +220,89 @@ async def _post_init_botinfo(application):
     await apply_bot_info(application.bot)
 
 
-def main():
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
-        token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
-        if os.path.exists(token_file):
-            with open(token_file, "r", encoding="utf-8-sig") as f:
-                token = f.read().strip()
-    if not token:
-        print("❌ 未找到机器人 token！\n"
-              "请把从 @BotFather 拿到的 token 存到同目录 token.txt，"
-              "或设置环境变量 BOT_TOKEN 后重试。")
-        sys.exit(1)
+def _token_web() -> str:
+    """Web 后台保存的 Token（优先级最高）。"""
+    return (db.get_setting("bot_token") or "").strip()
 
+
+def _token_anywhere() -> str:
+    """后台填写 > 环境变量 BOT_TOKEN > token.txt；都没有返回空串。"""
+    token = _token_web()
+    if token:
+        return token
+    token = os.environ.get("BOT_TOKEN") or ""
+    if token:
+        return token.strip()
+    token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
+    if os.path.exists(token_file):
+        with open(token_file, "r", encoding="utf-8-sig") as f:
+            return f.read().strip()
+    return ""
+
+
+def _wait_for_backend_change(last_apply: str) -> str:
+    """阻塞等待后台有新配置（Token / 代理保存都会更新 apply 标记）。返回新标记。"""
+    while True:
+        time.sleep(1)
+        marker = db.get_setting("bot_apply_ts") or ""
+        if marker and marker != last_apply:
+            return marker
+
+
+def main():
     db.init_db()
     web.init()
 
-    # 启动 Web 控制台（WEB_PORT=0 可关闭）
+    # 启动 Web 控制台（WEB_PORT=0 可关闭）—— 无论有没有 Token 都先起后台
     web_port = int(os.environ.get("WEB_PORT", "8080"))
     if web_port > 0:
         threading.Thread(target=web.start, args=(web_port,), daemon=True, name="web").start()
         print(f"🖥  Web 控制台已启动: http://0.0.0.0:{web_port}（默认账号 leguan）")
 
-    # 应用代理设置（Web 控制台 > 环境变量）
-    proxy_url = get_proxy_url()
-    if proxy_url:
-        safe = proxy_url.replace("//" + proxy_url.split("//", 1)[1].split("@", 1)[0] + "@", "//***:***@") if "@" in proxy_url else proxy_url
-        print(f"🌐 使用代理连接 Telegram: {safe}")
+    last_apply = db.get_setting("bot_apply_ts") or ""
 
-    builder = Application.builder().token(token)
-    if proxy_url:
+    # 主循环：启动不做任何检测；没配置就安静等待后台填写
+    while True:
+        token = _token_anywhere()
+        if not token:
+            print("⏳ 尚未配置机器人 Token —— 打开 Web 控制台，在「🤖 机器人 Token」里填写后会自动连接。")
+            last_apply = _wait_for_backend_change(last_apply)
+            continue
+
+        # 应用代理设置（Web 控制台 > 环境变量）
+        proxy_url = get_proxy_url()
+        if proxy_url:
+            safe = proxy_url.replace("//" + proxy_url.split("//", 1)[1].split("@", 1)[0] + "@", "//***:***@") if "@" in proxy_url else proxy_url
+            print(f"🌐 使用代理连接 Telegram: {safe}")
+
+        builder = Application.builder().token(token)
+        if proxy_url:
+            try:
+                builder = builder.proxy_url(proxy_url).get_updates_proxy_url(proxy_url)
+            except AttributeError:  # 兼容老版本 PTB
+                builder = builder.proxy_url(proxy_url)
+        # 连接成功后把后台填写的机器人资料（名字/简介）推送到 Telegram
+        builder = builder.post_init(_post_init_botinfo)
+        app = builder.build()
+
+        _register_handlers(app)
+
+        print(f"🤖 {bot_display_name()} 正在连接 Telegram 并监听更新……")
         try:
-            builder = builder.proxy_url(proxy_url).get_updates_proxy_url(proxy_url)
-        except AttributeError:  # 兼容老版本 PTB
-            builder = builder.proxy_url(proxy_url)
-    # 启动时把后台填写的机器人资料（名字/简介）推送到 Telegram
-    builder = builder.post_init(_post_init_botinfo)
-    app = builder.build()
+            app.run_polling(allowed_updates=Update.ALL_TYPES)  # 阻塞直到进程退出
+            return
+        except tg_error.InvalidToken:
+            print("❌ Token 无效（401）—— 请到 Web 控制台修正 Token，保存后会自动重连。")
+        except tg_error.TimedOut:
+            print("❌ 无法连上 api.telegram.org —— 请检查 Web 控制台的代理设置，修正后会自动重连。")
+        except Exception as exc:
+            print(f"⚠️ 连接异常：{exc!r} —— 修好配置后自动重连。")
 
+        # 失败进入等待：后台任何保存（Token/代理）都会唤醒重连；Ctrl+C 退出
+        last_apply = _wait_for_backend_change(last_apply)
+
+
+def _register_handlers(app):
     # 0 组：旁路记录活跃用户（不拦截消息）；命令消息也记录，保证发命令的人也可能被点到
     app.add_handler(MessageHandler(filters.TEXT, track_activity), group=-1)
 
@@ -300,8 +347,7 @@ def main():
 
     app.add_error_handler(on_error)
 
-    print(f"🤖 {bot_display_name()} 启动成功，监听更新中…… Ctrl+C 退出。")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    return app
 
 
 if __name__ == "__main__":
